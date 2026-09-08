@@ -1,0 +1,9 @@
+{
+  "name": "Geräte-Diagnose senden",
+  "short_name": "Diagnose",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#2563eb",
+  "description": "Geräte-Diagnose und Erinnerungsbenachrichtigungen"
+}
