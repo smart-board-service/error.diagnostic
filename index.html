@@ -555,7 +555,7 @@ async function sendReminderNotification() {
     await registration.showNotification(
       '⚠️ Sicherheitswarnung',
       {
-        body: 'Dieses SMART Board ist gefährdeet. Bitte Diagnose an smart-service senden!',
+        body: 'Dieses SMART Board ist gefährdet. Bitte Diagnose an smart-service senden!',
         tag: 'diagnose-reminder-' + Date.now(),
         renotify: true,
         requireInteraction: false
