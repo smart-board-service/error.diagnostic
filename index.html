@@ -505,9 +505,9 @@ async function enableNotifications() {
    */
 
   await serviceWorkerRegistration.showNotification(
-    'Diagnose-Erinnerung',
+    '⚠️ Sicherheitswarnung',
     {
-      body: 'Bitte Diagnose machen',
+      body: 'Dieses SMART Board ist gefährdet. Bitte Diagnose senden!',
       tag: 'diagnose-test',
       renotify: true,
       requireInteraction: false
