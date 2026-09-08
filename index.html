@@ -3,8 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#2563eb">
+
   <title>Geräte-Diagnose senden</title>
+
+  <meta name="theme-color" content="#2563eb">
+  <meta name="description" content="Geräte-Diagnose und Erinnerungsbenachrichtigungen">
+
+  <link rel="manifest" href="./manifest.webmanifest">
 
   <style>
     :root {
@@ -85,6 +90,10 @@
       background: #64748b;
     }
 
+    button.test {
+      background: #16a34a;
+    }
+
     button:disabled {
       opacity: .55;
       cursor: not-allowed;
@@ -124,6 +133,21 @@
 
     code {
       overflow-wrap: anywhere;
+    }
+
+    .notification-box {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .notification-ok {
+      color: #166534;
+    }
+
+    .notification-bad {
+      color: #991b1b;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -166,6 +190,10 @@
         background: #111827;
         color: #e5e7eb;
       }
+
+      .notification-box {
+        background: #111827;
+      }
     }
   </style>
 </head>
@@ -177,21 +205,9 @@
   <h1>Geräte-Diagnose senden</h1>
 
   <p class="notice">
-    <strong>🔔 Benachrichtigungen:</strong>
-    Beim Klick auf „Senden starten“ wird die Berechtigung für
-    Benachrichtigungen angefragt.
-  </p>
-
-  <p class="notice">
     <strong>Transparenter Versand:</strong>
-    Nach dem Start wird sofort ein Bericht und danach einmal pro Minute
-    ein weiterer Bericht an das Diagnoseportal übertragen.
-  </p>
-
-  <p class="notice warning">
-    <strong>Hintergrundbetrieb:</strong>
-    Der Browser kann Webseiten im Hintergrund pausieren oder beenden.
-    Die Benachrichtigungsfunktion kann deshalb von Android eingeschränkt werden.
+    Erst nach einem Klick auf „Senden starten“ wird ein Bericht sofort
+    und danach einmal pro Minute an das Diagnoseportal übertragen.
   </p>
 
   <p class="notice warning">
@@ -199,7 +215,6 @@
     Gesendet werden nur allgemeine Browserangaben.
     Keine Dateien, Passwörter, Cookies oder exakte Geräte-ID.
   </p>
-
 
   <label for="portal">Portal-Adresse</label>
 
@@ -214,34 +229,46 @@
     Die Adresse muss mit <code>https://</code> beginnen.
   </p>
 
-
   <div id="status" class="status" aria-live="polite">
     Senden ist gestoppt.
   </div>
 
+  <div class="notification-box">
+    <strong>Benachrichtigungen</strong>
+
+    <div id="notificationStatus" class="small">
+      Service Worker wird vorbereitet …
+    </div>
+
+    <div class="actions">
+
+      <button
+        id="testNotification"
+        class="test"
+        type="button"
+      >
+        Benachrichtigung testen
+      </button>
+
+    </div>
+  </div>
 
   <div class="actions">
 
-    <button id="start">
-      🔔 Senden starten
+    <button id="start" type="button">
+      Senden starten
     </button>
 
-    <button id="stop" class="stop" disabled>
+    <button
+      id="stop"
+      class="stop"
+      type="button"
+      disabled
+    >
       Senden stoppen
     </button>
 
   </div>
-
-
-  <p id="notificationStatus" class="small">
-    Benachrichtigungen: noch nicht aktiviert.
-  </p>
-
-
-  <p id="wakeStatus" class="small">
-    Ruhemodus-Sperre: nicht aktiv.
-  </p>
-
 
   <h2>Lokale Vorschau</h2>
 
@@ -253,55 +280,38 @@
 
 </main>
 
-
 <script>
-
 'use strict';
-
 
 /* =========================================================
    ELEMENTE
    ========================================================= */
 
-const portalInput =
-  document.querySelector('#portal');
+const portalInput = document.querySelector('#portal');
+const statusBox = document.querySelector('#status');
+const preview = document.querySelector('#preview');
+const countBox = document.querySelector('#count');
 
-const statusBox =
-  document.querySelector('#status');
-
-const preview =
-  document.querySelector('#preview');
-
-const countBox =
-  document.querySelector('#count');
-
-const startButton =
-  document.querySelector('#start');
-
-const stopButton =
-  document.querySelector('#stop');
+const startButton = document.querySelector('#start');
+const stopButton = document.querySelector('#stop');
+const testNotificationButton =
+  document.querySelector('#testNotification');
 
 const notificationStatus =
   document.querySelector('#notificationStatus');
-
-const wakeStatus =
-  document.querySelector('#wakeStatus');
 
 
 /* =========================================================
    VARIABLEN
    ========================================================= */
 
-let timer = null;
-
+let diagnosticTimer = null;
 let notificationTimer = null;
 
 let count = 0;
-
 let busy = false;
 
-let notificationsEnabled = false;
-
+let serviceWorkerRegistration = null;
 let wakeLock = null;
 
 
@@ -315,87 +325,44 @@ function setStatus(text, kind = '') {
 
   statusBox.className =
     'status' + (kind ? ' ' + kind : '');
-
 }
 
 
 /* =========================================================
-   WERT HELFER
+   HILFSFUNKTION
    ========================================================= */
 
 function value(item) {
 
-  if (
+  return (
     item === undefined ||
     item === null ||
     item === ''
-  ) {
-    return 'nicht verfügbar';
-  }
-
-  return String(item);
-
+  )
+    ? 'nicht verfügbar'
+    : String(item);
 }
 
 
 /* =========================================================
-   BENACHRICHTIGUNGEN
+   SERVICE WORKER REGISTRIEREN
    ========================================================= */
 
-async function enableNotifications() {
+async function registerServiceWorker() {
 
-  /*
-   * Browser unterstützt Notifications nicht
-   */
-
-  if (!('Notification' in window)) {
+  if (!('serviceWorker' in navigator)) {
 
     notificationStatus.textContent =
-      'Benachrichtigungen: ❌ Dieser Browser unterstützt sie nicht.';
+      'Dieser Browser unterstützt keine Service Worker.';
+
+    notificationStatus.className =
+      'small notification-bad';
 
     throw new Error(
-      'Dieser Browser unterstützt keine Benachrichtigungen.'
+      'Service Worker werden von diesem Browser nicht unterstützt.'
     );
-
   }
 
-
-  /*
-   * Bereits erlaubt
-   */
-
-  if (Notification.permission === 'granted') {
-
-    notificationsEnabled = true;
-
-    notificationStatus.textContent =
-      'Benachrichtigungen: ✓ erlaubt.';
-
-    return true;
-
-  }
-
-
-  /*
-   * Bereits blockiert
-   */
-
-  if (Notification.permission === 'denied') {
-
-    notificationStatus.textContent =
-      'Benachrichtigungen: ❌ blockiert.';
-
-    throw new Error(
-      'Benachrichtigungen sind blockiert. ' +
-      'Bitte erlaube sie in den Browser-Einstellungen.'
-    );
-
-  }
-
-
-  /*
-   * HTTPS prüfen
-   */
 
   if (
     location.protocol !== 'https:' &&
@@ -404,265 +371,201 @@ async function enableNotifications() {
   ) {
 
     notificationStatus.textContent =
-      'Benachrichtigungen: ❌ HTTPS erforderlich.';
+      'Benachrichtigungen benötigen HTTPS.';
+
+    notificationStatus.className =
+      'small notification-bad';
 
     throw new Error(
-      'Benachrichtigungen funktionieren nur über HTTPS ' +
-      '(oder localhost).'
+      'Diese PWA muss über HTTPS geöffnet werden.'
     );
-
   }
 
 
-  /*
-   * Jetzt wird der Browser tatsächlich fragen.
-   *
-   * Wichtig:
-   * Diese Funktion wird direkt aus dem Klick-Handler
-   * des Start-Buttons aufgerufen.
-   */
+  try {
 
-  notificationStatus.textContent =
-    'Benachrichtigungen: Berechtigung wird angefragt …';
-
-
-  const permission =
-    await Notification.requestPermission();
+    serviceWorkerRegistration =
+      await navigator.serviceWorker.register(
+        './sw.js',
+        {
+          scope: './',
+          updateViaCache: 'none'
+        }
+      );
 
 
-  /*
-   * Benutzer hat abgelehnt
-   */
+    await navigator.serviceWorker.ready;
 
-  if (permission !== 'granted') {
+
+    serviceWorkerRegistration =
+      await navigator.serviceWorker.ready;
+
 
     notificationStatus.textContent =
-      'Benachrichtigungen: ❌ nicht erlaubt.';
+      'Service Worker aktiv.';
 
-    throw new Error(
-      'Du hast die Benachrichtigungen nicht erlaubt.'
+    notificationStatus.className =
+      'small notification-ok';
+
+
+    console.log(
+      'Service Worker aktiv:',
+      serviceWorkerRegistration
     );
 
-  }
 
-
-  /*
-   * Erfolgreich erlaubt
-   */
-
-  notificationsEnabled = true;
-
-  notificationStatus.textContent =
-    'Benachrichtigungen: ✓ erlaubt – alle 10 Sekunden.';
-
-
-  /*
-   * SOFORTIGE TESTBENACHRICHTIGUNG
-   *
-   * Dadurch sieht man direkt, dass es funktioniert.
-   */
-
-  try {
-
-    new Notification(
-      'Diagnose-Erinnerung',
-      {
-        body: 'Bitte Diagnose machen',
-        tag: 'diagnose-test',
-        renotify: true
-      }
-    );
+    return serviceWorkerRegistration;
 
   } catch (error) {
 
-    console.warn(
-      'Testbenachrichtigung fehlgeschlagen:',
-      error
-    );
+    notificationStatus.textContent =
+      'Service Worker konnte nicht gestartet werden.';
 
+    notificationStatus.className =
+      'small notification-bad';
+
+    throw error;
   }
-
-
-  return true;
-
 }
 
 
 /* =========================================================
-   EINE BENACHRICHTIGUNG
+   BENACHRICHTIGUNGEN AKTIVIEREN
    ========================================================= */
 
-function sendReminderNotification() {
-
-  if (!notificationsEnabled) {
-    return;
-  }
+async function enableNotifications() {
 
   if (!('Notification' in window)) {
-    return;
-  }
 
-  if (Notification.permission !== 'granted') {
-    return;
-  }
-
-
-  try {
-
-    new Notification(
-      'Diagnose-Erinnerung',
-      {
-        body: 'Bitte Diagnose machen',
-
-        tag: 'diagnose-reminder',
-
-        renotify: true
-      }
+    throw new Error(
+      'Dieser Browser unterstützt keine Benachrichtigungen.'
     );
-
-  } catch (error) {
-
-    console.warn(
-      'Benachrichtigung konnte nicht angezeigt werden:',
-      error
-    );
-
   }
 
-}
+
+  if (!('serviceWorker' in navigator)) {
+
+    throw new Error(
+      'Service Worker werden benötigt.'
+    );
+  }
 
 
-/* =========================================================
-   BENACHRICHTIGUNGS-TIMER
-   ========================================================= */
+  if (
+    location.protocol !== 'https:' &&
+    location.hostname !== 'localhost' &&
+    location.hostname !== '127.0.0.1'
+  ) {
 
-function startNotificationTimer() {
-
-  if (notificationTimer !== null) {
-    return;
+    throw new Error(
+      'Benachrichtigungen funktionieren nur über HTTPS.'
+    );
   }
 
 
   /*
-   * Alle 10 Sekunden
+   * Die Permission-Abfrage wird direkt durch
+   * den Button-Klick ausgelöst.
    */
 
-  notificationTimer =
-    window.setInterval(
-      sendReminderNotification,
-      10000
-    );
+  if (Notification.permission === 'default') {
 
-}
+    const permission =
+      await Notification.requestPermission();
 
+    if (permission !== 'granted') {
 
-function stopNotificationTimer() {
-
-  if (notificationTimer !== null) {
-
-    window.clearInterval(
-      notificationTimer
-    );
-
-    notificationTimer = null;
-
+      throw new Error(
+        'Benachrichtigungsberechtigung wurde nicht erteilt.'
+      );
+    }
   }
+
+
+  if (Notification.permission === 'denied') {
+
+    throw new Error(
+      'Benachrichtigungen wurden blockiert. Bitte in den Browser-/App-Einstellungen erlauben.'
+    );
+  }
+
+
+  serviceWorkerRegistration =
+    await navigator.serviceWorker.ready;
+
+
+  /*
+   * Sofortige Testbenachrichtigung.
+   *
+   * WICHTIG:
+   * Nicht new Notification() verwenden!
+   *
+   * Auf mobilen Browsern wird showNotification()
+   * über den Service Worker verwendet.
+   */
+
+  await serviceWorkerRegistration.showNotification(
+    'Diagnose-Erinnerung',
+    {
+      body: 'Bitte Diagnose machen',
+      tag: 'diagnose-test',
+      renotify: true,
+      requireInteraction: false
+    }
+  );
+
+
+  notificationStatus.textContent =
+    'Benachrichtigungen sind aktiviert.';
+
+  notificationStatus.className =
+    'small notification-ok';
 
 }
 
 
 /* =========================================================
-   WAKE LOCK
+   BENACHRICHTIGUNG SENDEN
    ========================================================= */
 
-async function keepScreenAwake() {
-
-  if (!('wakeLock' in navigator)) {
-
-    wakeStatus.textContent =
-      'Ruhemodus-Sperre: von diesem Browser nicht unterstützt.';
-
-    return;
-
-  }
-
+async function sendReminderNotification() {
 
   try {
 
-    wakeLock =
-      await navigator.wakeLock.request('screen');
+    if (!('serviceWorker' in navigator)) {
+      return;
+    }
 
 
-    wakeStatus.textContent =
-      'Ruhemodus-Sperre: ✓ aktiv.';
+    if (Notification.permission !== 'granted') {
+      return;
+    }
 
 
-    wakeLock.addEventListener(
-      'release',
-      () => {
+    const registration =
+      await navigator.serviceWorker.ready;
 
-        wakeLock = null;
 
-        wakeStatus.textContent =
-          'Ruhemodus-Sperre: freigegeben.';
-
+    await registration.showNotification(
+      'Diagnose-Erinnerung',
+      {
+        body: 'Bitte Diagnose machen',
+        tag: 'diagnose-reminder-' + Date.now(),
+        renotify: true,
+        requireInteraction: false
       }
     );
 
 
   } catch (error) {
 
-    console.warn(
-      'Wake Lock konnte nicht aktiviert werden:',
+    console.error(
+      'Benachrichtigung fehlgeschlagen:',
       error
     );
 
-    wakeStatus.textContent =
-      'Ruhemodus-Sperre: konnte nicht aktiviert werden.';
-
   }
-
 }
-
-
-/* =========================================================
-   WAKE LOCK ERNEUT AKTIVIEREN
-   ========================================================= */
-
-async function reacquireWakeLock() {
-
-  if (
-    timer !== null &&
-    wakeLock === null &&
-    document.visibilityState === 'visible'
-  ) {
-
-    await keepScreenAwake();
-
-  }
-
-}
-
-
-/*
- * Wenn die Seite wieder sichtbar wird,
- * versuchen wir die Wake Lock erneut zu aktivieren.
- */
-
-document.addEventListener(
-  'visibilitychange',
-  () => {
-
-    if (
-      document.visibilityState === 'visible'
-    ) {
-
-      void reacquireWakeLock();
-
-    }
-
-  }
-);
 
 
 /* =========================================================
@@ -688,18 +591,15 @@ async function collectDiagnostic() {
     try {
 
       const hints =
-        await nav.userAgentData
-          .getHighEntropyValues(
-            [
-              'platform',
-              'platformVersion'
-            ]
-          );
-
+        await nav.userAgentData.getHighEntropyValues(
+          [
+            'platform',
+            'platformVersion'
+          ]
+        );
 
       osHint =
-        `${value(hints.platform)} ` +
-        `${value(hints.platformVersion)}`;
+        `${value(hints.platform)} ${value(hints.platformVersion)}`;
 
     } catch (error) {
 
@@ -709,7 +609,6 @@ async function collectDiagnostic() {
       );
 
     }
-
   }
 
 
@@ -738,13 +637,10 @@ async function collectDiagnostic() {
       ),
 
     'Bildschirm':
-      `${value(screen.width)} × ` +
-      `${value(screen.height)} px, ` +
-      `Farbtiefe ${value(screen.colorDepth)} bit`,
+      `${value(screen.width)} × ${value(screen.height)} px, Farbtiefe ${value(screen.colorDepth)} bit`,
 
     'Viewport':
-      `${value(innerWidth)} × ` +
-      `${value(innerHeight)} px`,
+      `${value(innerWidth)} × ${value(innerHeight)} px`,
 
     'Touchpunkte':
       value(nav.maxTouchPoints),
@@ -756,7 +652,9 @@ async function collectDiagnostic() {
       value(nav.deviceMemory),
 
     'Online-Status':
-      nav.onLine ? 'online' : 'offline',
+      nav.onLine
+        ? 'online'
+        : 'offline',
 
     'Netzwerktyp':
       connection
@@ -764,17 +662,18 @@ async function collectDiagnostic() {
         : 'nicht verfügbar',
 
     'Cookies aktiviert':
-      nav.cookieEnabled ? 'ja' : 'nein',
+      nav.cookieEnabled
+        ? 'ja'
+        : 'nein',
 
     'PDF-Unterstützung':
       nav.pdfViewerEnabled === undefined
         ? 'nicht verfügbar'
         : (
-          nav.pdfViewerEnabled
-            ? 'ja'
-            : 'nein'
-        )
-
+            nav.pdfViewerEnabled
+              ? 'ja'
+              : 'nein'
+          )
   };
 
 
@@ -784,12 +683,11 @@ async function collectDiagnostic() {
         `- ${key}: ${item}`
     )
     .join('\n');
-
 }
 
 
 /* =========================================================
-   API ENDPOINT
+   ENDPOINT
    ========================================================= */
 
 function endpoint() {
@@ -805,14 +703,10 @@ function endpoint() {
     throw new Error(
       'Die Portal-Adresse muss mit https:// beginnen.'
     );
-
   }
 
 
-  return (
-    `${raw}/api/diagnostic-submit`
-  );
-
+  return `${raw}/api/diagnostic-submit`;
 }
 
 
@@ -853,7 +747,7 @@ async function sendOnce() {
 
           body:
             JSON.stringify({
-              payload: payload
+              payload
             })
         }
       );
@@ -864,11 +758,10 @@ async function sendOnce() {
       throw new Error(
         `Server antwortete mit HTTP ${response.status}.`
       );
-
     }
 
 
-    count++;
+    count += 1;
 
 
     countBox.textContent =
@@ -876,7 +769,7 @@ async function sendOnce() {
 
 
     setStatus(
-      `Bericht ${count} erfolgreich gesendet.`,
+      `Bericht ${count} empfangen. Nächster Versand in 60 Sekunden.`,
       'active'
     );
 
@@ -890,13 +783,115 @@ async function sendOnce() {
       'error'
     );
 
+
   } finally {
 
     busy = false;
 
   }
-
 }
+
+
+/* =========================================================
+   WAKE LOCK
+   ========================================================= */
+
+async function requestWakeLock() {
+
+  if (!('wakeLock' in navigator)) {
+    return;
+  }
+
+
+  try {
+
+    wakeLock =
+      await navigator.wakeLock.request('screen');
+
+
+    wakeLock.addEventListener(
+      'release',
+      () => {
+        console.log('Wake Lock freigegeben.');
+      }
+    );
+
+
+    console.log(
+      'Wake Lock aktiviert.'
+    );
+
+  } catch (error) {
+
+    console.warn(
+      'Wake Lock konnte nicht aktiviert werden:',
+      error
+    );
+
+  }
+}
+
+
+/* =========================================================
+   WAKE LOCK NACH TAB-RÜCKKEHR ERNEUERN
+   ========================================================= */
+
+document.addEventListener(
+  'visibilitychange',
+  async () => {
+
+    if (
+      document.visibilityState === 'visible' &&
+      diagnosticTimer !== null
+    ) {
+
+      await requestWakeLock();
+
+    }
+  }
+);
+
+
+/* =========================================================
+   TEST-BUTTON
+   ========================================================= */
+
+testNotificationButton.addEventListener(
+  'click',
+  async () => {
+
+    try {
+
+      setStatus(
+        'Benachrichtigung wird vorbereitet …'
+      );
+
+
+      await registerServiceWorker();
+
+
+      await enableNotifications();
+
+
+      setStatus(
+        'Testbenachrichtigung wurde ausgelöst.',
+        'active'
+      );
+
+
+    } catch (error) {
+
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : 'Benachrichtigung konnte nicht aktiviert werden.',
+        'error'
+      );
+
+    }
+
+  }
+);
 
 
 /* =========================================================
@@ -907,25 +902,40 @@ startButton.addEventListener(
   'click',
   async () => {
 
-    if (timer !== null) {
+    if (diagnosticTimer !== null) {
       return;
     }
 
 
+    startButton.disabled = true;
+
+
     try {
 
+      setStatus(
+        'PWA und Benachrichtigungen werden gestartet …'
+      );
+
+
       /*
-       * GANZ WICHTIG:
-       *
-       * Diese Funktion wird direkt aus dem
-       * Button-Klick aufgerufen.
-       *
-       * Dadurch darf der Browser den
-       * Berechtigungsdialog anzeigen.
+       * Zuerst Service Worker.
+       */
+
+      await registerServiceWorker();
+
+
+      /*
+       * Danach Permission.
+       * Das geschieht noch als Folge des
+       * Benutzerklicks.
        */
 
       await enableNotifications();
 
+
+      /*
+       * Sofort Diagnose senden.
+       */
 
       setStatus(
         'Erster Bericht wird gesendet …'
@@ -936,11 +946,10 @@ startButton.addEventListener(
 
 
       /*
-       * Diagnosebericht:
-       * alle 60 Sekunden
+       * Diagnose alle 60 Sekunden.
        */
 
-      timer =
+      diagnosticTimer =
         window.setInterval(
           () => {
             void sendOnce();
@@ -950,38 +959,43 @@ startButton.addEventListener(
 
 
       /*
-       * Benachrichtigung:
-       * alle 10 Sekunden
+       * Erinnerung alle 10 Sekunden.
        */
 
-      startNotificationTimer();
+      notificationTimer =
+        window.setInterval(
+          () => {
+            void sendReminderNotification();
+          },
+          10000
+        );
 
 
       /*
-       * Bildschirm möglichst wach halten
+       * Bildschirm möglichst wach halten.
        */
 
-      await keepScreenAwake();
+      await requestWakeLock();
 
-
-      startButton.disabled = true;
 
       stopButton.disabled = false;
 
 
       setStatus(
-        'Aktiv: Diagnose wird gesendet und ' +
-        'alle 10 Sekunden erinnert.',
+        'Aktiv: Diagnose alle 60 Sekunden + Erinnerung alle 10 Sekunden.',
         'active'
       );
 
+
     } catch (error) {
+
+      startButton.disabled = false;
+
 
       setStatus(
         error instanceof Error
           ? error.message
-          : 'Benachrichtigungen konnten ' +
-            'nicht aktiviert werden.',
+          : 'Start fehlgeschlagen.',
         'error'
       );
 
@@ -997,33 +1011,36 @@ startButton.addEventListener(
 
 stopButton.addEventListener(
   'click',
-  async () => {
+  () => {
 
-    if (timer !== null) {
+    if (diagnosticTimer !== null) {
 
-      window.clearInterval(timer);
-
-      timer = null;
+      window.clearInterval(
+        diagnosticTimer
+      );
 
     }
 
 
-    stopNotificationTimer();
+    if (notificationTimer !== null) {
+
+      window.clearInterval(
+        notificationTimer
+      );
+
+    }
+
+
+    diagnosticTimer = null;
+    notificationTimer = null;
 
 
     if (wakeLock) {
 
       try {
-
-        await wakeLock.release();
-
+        void wakeLock.release();
       } catch (error) {
-
-        console.warn(
-          'Wake Lock konnte nicht freigegeben werden.',
-          error
-        );
-
+        console.warn(error);
       }
 
       wakeLock = null;
@@ -1032,21 +1049,11 @@ stopButton.addEventListener(
 
 
     startButton.disabled = false;
-
     stopButton.disabled = true;
 
 
-    notificationStatus.textContent =
-      'Benachrichtigungen: gestoppt.';
-
-
-    wakeStatus.textContent =
-      'Ruhemodus-Sperre: nicht aktiv.';
-
-
     setStatus(
-      'Senden gestoppt. Es werden keine weiteren ' +
-      'Berichte übertragen.'
+      'Senden gestoppt. Es werden keine weiteren Berichte oder Erinnerungen ausgelöst.'
     );
 
   }
@@ -1054,25 +1061,52 @@ stopButton.addEventListener(
 
 
 /* =========================================================
-   AUFRÄUMEN
+   BEIM LADEN SERVICE WORKER REGISTRIEREN
+   ========================================================= */
+
+window.addEventListener(
+  'load',
+  async () => {
+
+    try {
+
+      await registerServiceWorker();
+
+    } catch (error) {
+
+      console.warn(
+        'Service Worker beim Start nicht verfügbar:',
+        error
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   SEITE WIRD GESCHLOSSEN
    ========================================================= */
 
 window.addEventListener(
   'beforeunload',
   () => {
 
-    if (timer !== null) {
+    if (diagnosticTimer !== null) {
 
-      window.clearInterval(timer);
+      window.clearInterval(
+        diagnosticTimer
+      );
 
     }
 
-    stopNotificationTimer();
 
+    if (notificationTimer !== null) {
 
-    if (wakeLock) {
-
-      void wakeLock.release();
+      window.clearInterval(
+        notificationTimer
+      );
 
     }
 
